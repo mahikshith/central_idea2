@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C&S Think tank</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            background-color: #f8fafc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .pane {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+        }
+
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Custom Scrollbar for file uploads */
+        .attachment-preview img {
+            max-height: 200px;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 1px solid #e5e7eb;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const CURRENT_USER = "Alex Dev";
+
+        // --- UTILS ---
+        const fileToBase64 = file => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = error => reject(error);
+        });
+
+        const AttachmentDisplay = ({ dataUrl }) => {
+            if (!dataUrl) return null;
+            if (dataUrl.startsWith('data:image')) {
+                return <img src={dataUrl} alt="attachment" className="max-w-xs mt-3 rounded border shadow-sm" />;
+            }
+            return (
+                <div className="flex items-center gap-2 mt-3 text-blue-600 bg-blue-50 p-2 rounded border border-blue-100 inline-block text-sm font-semibold">
+                    📎 Attached File
+                </div>
+            );
+        };
+
+        // --- REAL API CONNECTION (For Local FastAPI & Cloud Run) ---
+        const realApi = {
+            getIdeas: async (query = "") => {
+                const url = query ? `/api/search?q=${encodeURIComponent(query)}` : '/api/ideas';
+                const res = await fetch(url);
+                return await res.json();
+            },
+            getIdea: async (id) => {
+                const res = await fetch(`/api/ideas/${id}`);
+                if (!res.ok) return null;
+                return await res.json();
+            },
+            createIdea: async (payload) => {
+                const res = await fetch('/api/ideas', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                return await res.json();
+            },
+            upvoteIdea: async (id) => {
+                const res = await fetch(`/api/ideas/${id}/upvote`, { method: 'POST' });
+                return await res.json();
+            },
+            addComment: async (id, payload) => {
+                const res = await fetch(`/api/ideas/${id}/comments`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                return await res.json();
+            },
+            voteComment: async (ideaId, commentId, delta) => {
+                const res = await fetch(`/api/ideas/${ideaId}/comments/${commentId}/vote?delta=${delta}`, { method: 'POST' });
+                return await res.json();
+            },
+            summarizeIdea: async (id) => {
+                const res = await fetch(`/api/ideas/${id}/summarize`, { method: 'POST' });
+                return await res.json();
+            },
+            getNewsletters: async () => {
+                const res = await fetch('/api/newsletters');
+                return await res.json();
+            },
+            createNewsletter: async (payload) => {
+                const res = await fetch('/api/newsletters', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                return await res.json();
+            }
+        };
+
+        // --- MOCK API CONNECTION (For Canvas Preview Only) ---
+        let mockIdeasDB = [
+            {
+                id: "IDEA-A7F2", title: "Automate Weekly KPI Reports", description: "Currently we spend 3 hours manually pulling data from 4 systems. We should write a Python script to aggregate this automatically.", category: "Process Improvement", author: "Alice Eng", tagged_employees: ["Bob Data", "Charlie Ops"], status: "Proposed", upvotes: 12, summary: null,
+                comments: [
+                    { id: "c1", author: "Bob Data", text: "I can provide the API keys for the data warehouse.", timestamp: "2 days ago", parentId: null, upvotes: 5, attachment: null },
+                    { id: "c2", author: "Charlie Ops", text: "Great idea. Let's schedule a kickoff next Tuesday.", timestamp: "1 day ago", parentId: null, upvotes: 2, attachment: null },
+                    { id: "c3", author: "Alice Eng", text: "Thanks Charlie, I'll send out the invite shortly.", timestamp: "1 day ago", parentId: "c2", upvotes: 1, attachment: null },
+                    { id: "c4", author: "Dave IT", text: "Will this connect to the new ERP system?", timestamp: "5 hours ago", parentId: null, upvotes: 3, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-B8X9", title: "New Warehouse Onboarding Portal", description: "Staff are getting confused with our current PDF guides. Let's build a simple web portal for them to track their onboarding progress.", category: "New Idea", author: "Sarah Operations", tagged_employees: ["Alex Dev"], status: "Under Review", upvotes: 18, summary: null,
+                comments: [
+                    { id: "c5", author: "Mike Supervisor", text: "We definitely need this, PDFs are outdated.", timestamp: "3 days ago", parentId: null, upvotes: 8, attachment: null },
+                    { id: "c6", author: "Sarah Operations", text: "I have some wireframes we could use as a starting point.", timestamp: "2 days ago", parentId: null, upvotes: 4, attachment: null },
+                    { id: "c7", author: "Alex Dev", text: "Send them over, we can build a prototype by next sprint.", timestamp: "1 day ago", parentId: "c6", upvotes: 5, attachment: null },
+                    { id: "c8", author: "Maria HR", text: "Ensure it complies with the latest safety training modules.", timestamp: "12 hours ago", parentId: null, upvotes: 7, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-X912", title: "Optimize Forklift Routing", description: "We can reduce transit time by 15% if we implement a one-way pathing system in the heavy storage aisles.", category: "Process Improvement", author: "James Warehouse", tagged_employees: [], status: "Proposed", upvotes: 24, summary: null,
+                comments: [
+                    { id: "c9", author: "Tom Manager", text: "We tried this in 2019 but ran into bottleneck issues near loading dock B.", timestamp: "4 days ago", parentId: null, upvotes: 6, attachment: null },
+                    { id: "c10", author: "James Warehouse", text: "Good point. We expanded Dock B since then, so the clearance is much wider now.", timestamp: "3 days ago", parentId: "c9", upvotes: 4, attachment: null },
+                    { id: "c11", author: "Tom Manager", text: "Ah, true. Let's pilot this in Aisle 4 next week.", timestamp: "2 days ago", parentId: "c10", upvotes: 5, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-S4W1", title: "Switch to Biodegradable Shrink Wrap", description: "We use miles of plastic wrap daily. Switching to a biodegradable alternative would drastically reduce our carbon footprint and align with our sustainability goals.", category: "Process Improvement", author: "Eco Team", tagged_employees: ["Kevin Finance"], status: "Under Review", upvotes: 45, summary: null,
+                comments: [
+                    { id: "c12", author: "Eco Team", text: "I've contacted 3 vendors for bulk pricing.", timestamp: "1 week ago", parentId: null, upvotes: 12, attachment: null },
+                    { id: "c13", author: "Kevin Finance", text: "What is the estimated cost difference per pallet?", timestamp: "5 days ago", parentId: null, upvotes: 2, attachment: null },
+                    { id: "c14", author: "Eco Team", text: "About 4% more upfront, but largely offset by our waste disposal savings.", timestamp: "4 days ago", parentId: "c13", upvotes: 9, attachment: null },
+                    { id: "c15", author: "CEO Office", text: "Love this. Let's review the final numbers on Friday.", timestamp: "1 day ago", parentId: null, upvotes: 15, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-V7P3", title: "Implement Voice Picking Tech", description: "Warehouse selectors could move much faster if we upgraded to voice-directed picking headsets rather than using handheld scanners. Keeps hands free.", category: "Process Improvement", author: "John Logistics", tagged_employees: [], status: "Proposed", upvotes: 30, summary: null,
+                comments: [
+                    { id: "c16", author: "John Logistics", text: "Other DCs in our network saw a 20% speed increase with this.", timestamp: "2 weeks ago", parentId: null, upvotes: 8, attachment: null },
+                    { id: "c17", author: "Tech Support", text: "We need to check Wi-Fi coverage in the dead zones first.", timestamp: "10 days ago", parentId: null, upvotes: 5, attachment: null },
+                    { id: "c18", author: "Network Admin", text: "Access points are being upgraded next month, perfect timing.", timestamp: "9 days ago", parentId: "c17", upvotes: 11, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-M2C9", title: "Quarterly Cross-Department Mixer", description: "There are a lot of silos between procurement, sales, and operations. A casual quarterly mixer event would improve relations and cross-functional problem solving.", category: "Culture & Team", author: "HR Dept", tagged_employees: [], status: "Implemented", upvotes: 55, summary: "AI Summary: The proposal for a quarterly mixer to break down departmental silos received overwhelming support. Budget was approved for Q2, and Thursday afternoons were agreed upon as the best time. The idea has now been implemented.",
+                comments: [
+                    { id: "c19", author: "HR Dept", text: "Budget has been officially approved for Q2!", timestamp: "1 month ago", parentId: null, upvotes: 22, attachment: null },
+                    { id: "c20", author: "Ops Lead", text: "Can we do it on a Thursday afternoon? Fridays are tough for shipping.", timestamp: "3 weeks ago", parentId: null, upvotes: 14, attachment: null },
+                    { id: "c21", author: "Sales Director", text: "Thursday works best for the sales team as well.", timestamp: "3 weeks ago", parentId: "c20", upvotes: 8, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-L9E4", title: "Solar Panels for Hatfield Facility", description: "The roof of the Hatfield warehouse is massive and unobstructed. Installing solar panels could offset 30% of our energy costs over the next decade.", category: "Process Improvement", author: "Facilities Mgmt", tagged_employees: ["Exec Team"], status: "Under Review", upvotes: 82, summary: null,
+                comments: [
+                    { id: "c22", author: "Facilities Mgmt", text: "State green energy grants could cover up to 40% of the installation costs.", timestamp: "2 months ago", parentId: null, upvotes: 30, attachment: null },
+                    { id: "c23", author: "Kevin Finance", text: "Initial ROI is estimated at 4.5 years, which is excellent.", timestamp: "1 month ago", parentId: null, upvotes: 18, attachment: null },
+                    { id: "c24", author: "Exec Team", text: "Proceed to Phase 1 feasibility study. Great initiative.", timestamp: "3 weeks ago", parentId: null, upvotes: 45, attachment: null },
+                    { id: "c25", author: "Facilities Mgmt", text: "Consultants are coming in next week to survey the roof.", timestamp: "2 weeks ago", parentId: "c24", upvotes: 12, attachment: null }
+                ]
+            },
+            {
+                id: "IDEA-I3T8", title: "Mobile App for Inventory Tracking", description: "Floor managers need a quick mobile app on their company phones to scan and check inventory levels instantly, instead of walking back to a fixed terminal.", category: "New Idea", author: "IT Systems", tagged_employees: [], status: "Proposed", upvotes: 41, summary: null,
+                comments: [
+                    { id: "c26", author: "Alex Dev", text: "We can build this cross-platform using React Native.", timestamp: "5 days ago", parentId: null, upvotes: 10, attachment: null },
+                    { id: "c27", author: "Floor Supervisor", text: "It absolutely MUST have an offline mode for the freezer sections.", timestamp: "4 days ago", parentId: null, upvotes: 25, attachment: null },
+                    { id: "c28", author: "Alex Dev", text: "Noted. Local caching and sync-on-reconnect will be implemented.", timestamp: "3 days ago", parentId: "c27", upvotes: 15, attachment: null },
+                    { id: "c29", author: "IT Systems", text: "I'll draft the architecture document this week.", timestamp: "1 day ago", parentId: null, upvotes: 7, attachment: null }
+                ]
+            }
+        ];
+
+        let mockNewslettersDB = [
+            { id: "NEWS-1", title: "Q3 Leadership Update", content: "As we head into the busy holiday season, I want to thank everyone for their incredible dedication. Our supply chain resilience has never been stronger.", author: "Executive Team", timestamp: "2 days ago", attachment: null },
+            { id: "NEWS-2", title: "Welcome to C&S Think tank!", content: "This new platform is designed to give every employee a voice. Share your ideas, attach files, and let's build the future of food distribution together.", author: "Innovation Team", timestamp: "1 week ago", attachment: null }
+        ];
+
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        const mockApi = {
+            getIdeas: async (query = "") => {
+                await delay(300);
+                if (!query) return [...mockIdeasDB];
+                const q = query.toLowerCase();
+                return mockIdeasDB.filter(i => i.title.toLowerCase().includes(q) || i.description.toLowerCase().includes(q) || i.id.toLowerCase().includes(q));
+            },
+            getIdea: async (id) => {
+                await delay(200);
+                return mockIdeasDB.find(i => i.id === id);
+            },
+            createIdea: async (payload) => {
+                await delay(500);
+                const newIdea = { ...payload, id: "IDEA-" + Math.random().toString(36).substring(2, 6).toUpperCase(), status: "Proposed", upvotes: 0, summary: null, comments: [] };
+                mockIdeasDB.push(newIdea);
+                return newIdea;
+            },
+            upvoteIdea: async (id) => {
+                const idea = mockIdeasDB.find(i => i.id === id);
+                if (idea) idea.upvotes += 1;
+                return idea;
+            },
+            addComment: async (id, payload) => {
+                await delay(300);
+                const idea = mockIdeasDB.find(i => i.id === id);
+                if (idea) idea.comments.push({ ...payload, id: "C-" + Math.random().toString(36).substring(2, 6), timestamp: "Just now", upvotes: 0 });
+                return idea;
+            },
+            voteComment: async (ideaId, commentId, delta) => {
+                const idea = mockIdeasDB.find(i => i.id === ideaId);
+                if (idea) {
+                    const comment = idea.comments.find(c => c.id === commentId);
+                    if (comment) comment.upvotes += delta;
+                }
+                return idea;
+            },
+            summarizeIdea: async (id) => {
+                await delay(1500);
+                const idea = mockIdeasDB.find(i => i.id === id);
+                if (idea) idea.summary = "AI Summary: This thread discusses implementing the proposed idea to improve our workflows. Key members have offered to provide necessary resources and schedule a follow-up meeting. Sentiment is highly positive.";
+                return idea;
+            },
+            getNewsletters: async () => {
+                await delay(300);
+                return [...mockNewslettersDB].sort((a, b) => b.id.localeCompare(a.id));
+            },
+            createNewsletter: async (payload) => {
+                await delay(500);
+                const newNews = { ...payload, id: "NEWS-" + Math.random().toString(36).substring(2, 6).toUpperCase(), timestamp: "Just now" };
+                mockNewslettersDB.push(newNews);
+                return newNews;
+            }
+        };
+
+        // --- SMART ROUTING ---
+        // Uses mock DB for the Canvas previewer, but uses the real FastAPI backend when running locally/Cloud Run.
+        const isPreviewEnvironment = window.location.protocol === 'file:' || window.location.href.includes('blob:') || window.location.hostname.includes('usercontent');
+        const api = isPreviewEnvironment ? mockApi : realApi;
+
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [currentView, setCurrentView] = useState('feed');
+            const [selectedIdeaId, setSelectedIdeaId] = useState(null);
+            const [searchQuery, setSearchQuery] = useState("");
+
+            const [ideas, setIdeas] = useState([]);
+            const [newsletters, setNewsletters] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+
+            const [isSidebarMenuOpen, setIsSidebarMenuOpen] = useState(true);
+            const [sortOption, setSortOption] = useState('trending');
+
+            const fetchData = async (query = "") => {
+                setIsLoading(true);
+                try {
+                    const [ideasData, newsData] = await Promise.all([
+                        api.getIdeas(query),
+                        api.getNewsletters()
+                    ]);
+                    setIdeas(ideasData);
+                    setNewsletters(newsData);
+                } catch (err) {
+                    console.error("Failed to fetch data", err);
+                }
+                setIsLoading(false);
+            };
+
+            useEffect(() => { fetchData(); }, []);
+
+            const handleSearch = (e) => {
+                e.preventDefault();
+                setCurrentView('feed');
+                fetchData(searchQuery);
+            };
+
+            const viewDetail = (id) => {
+                setSelectedIdeaId(id);
+                setCurrentView('detail');
+            };
+
+            const sortedIdeas = [...ideas].sort((a, b) => {
+                if (sortOption === 'upvotes') return b.upvotes - a.upvotes;
+                if (sortOption === 'comments') return b.comments.length - a.comments.length;
+                if (sortOption === 'trending') return ((b.upvotes * 2) + b.comments.length) - ((a.upvotes * 2) + a.comments.length);
+                return 0;
+            });
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    {/* TOP HEADER */}
+                    <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+                        <div className="flex justify-center pt-6 pb-2">
+                            <img src="CS_Wholesale_Grocers_logo.png" alt="C&S Wholesale Grocers" className="h-20 object-contain" />
+                        </div>
+                        <div className="max-w-7xl mx-auto w-full px-4 pb-4 pt-2 flex flex-col md:flex-row items-center justify-between gap-4">
+                            <div className="flex items-center gap-6">
+                                <h1 className="text-2xl font-black cursor-pointer text-red-700 tracking-tight" onClick={() => { setSearchQuery(""); fetchData(); setCurrentView('feed'); }}>
+                                    💡 C&S Think tank
+                                </h1>
+                                <div className="hidden md:flex gap-5 text-sm font-semibold text-slate-600">
+                                    <button onClick={() => setCurrentView('about')} className="hover:text-red-700 transition">About</button>
+                                    <button onClick={() => setCurrentView('contribute')} className="hover:text-red-700 transition">Contribute</button>
+                                    <button onClick={() => setCurrentView('contact')} className="hover:text-red-700 transition">Contact Us</button>
+                                </div>
+                            </div>
+
+                            <form onSubmit={handleSearch} className="w-full md:w-96 flex">
+                                <input
+                                    type="text"
+                                    placeholder="Search IDs or ask 'Is there an idea for...'"
+                                    className="w-full px-4 py-2 rounded-l-md border border-slate-300 text-slate-900 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                />
+                                <button type="submit" className="bg-red-700 px-5 text-white font-semibold rounded-r-md hover:bg-red-800 transition">Search</button>
+                            </form>
+                        </div>
+                    </header>
+
+                    {/* MAIN LAYOUT */}
+                    <div className="flex-grow flex max-w-7xl mx-auto w-full">
+
+                        {/* LEFT SIDEBAR */}
+                        <aside className="w-64 hidden md:block p-6 border-r border-slate-200 bg-slate-50 min-h-full">
+
+                            {/* Sort Options */}
+                            <div className="mb-8">
+                                <div className="flex items-center gap-3 cursor-pointer text-slate-800 hover:text-red-700 mb-4 transition select-none" onClick={() => setIsSidebarMenuOpen(!isSidebarMenuOpen)}>
+                                    <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+                                    <span className="font-bold text-lg">Sort Ideas</span>
+                                </div>
+                                {isSidebarMenuOpen && (
+                                    <ul className="space-y-2 animate-fade-in text-sm font-semibold text-slate-600">
+                                        <li><button onClick={() => { setSortOption('trending'); setCurrentView('feed'); }} className={`w-full text-left px-4 py-2.5 rounded-md transition ${sortOption === 'trending' && currentView === 'feed' ? 'bg-red-100 text-red-800' : 'hover:bg-slate-200'}`}>🔥 Trending</button></li>
+                                        <li><button onClick={() => { setSortOption('upvotes'); setCurrentView('feed'); }} className={`w-full text-left px-4 py-2.5 rounded-md transition ${sortOption === 'upvotes' && currentView === 'feed' ? 'bg-red-100 text-red-800' : 'hover:bg-slate-200'}`}>⬆️ Most Upvotes</button></li>
+                                        <li><button onClick={() => { setSortOption('comments'); setCurrentView('feed'); }} className={`w-full text-left px-4 py-2.5 rounded-md transition ${sortOption === 'comments' && currentView === 'feed' ? 'bg-red-100 text-red-800' : 'hover:bg-slate-200'}`}>💬 Most Commented</button></li>
+                                    </ul>
+                                )}
+                            </div>
+
+                            <div className="border-t border-slate-300 mb-6"></div>
+
+                            {/* New Sections: Newsletters & Business */}
+                            <div>
+                                <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H14"></path></svg>
+                                    Discover
+                                </h3>
+                                <ul className="space-y-2 text-sm font-semibold text-slate-600">
+                                    <li>
+                                        <button onClick={() => setCurrentView('newsletters')} className={`w-full text-left px-4 py-2.5 rounded-md transition ${currentView === 'newsletters' ? 'bg-red-100 text-red-800' : 'hover:bg-slate-200'}`}>
+                                            📰 Newsletters
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button onClick={() => setCurrentView('history')} className={`w-full text-left px-4 py-2.5 rounded-md transition ${currentView === 'history' ? 'bg-red-100 text-red-800' : 'hover:bg-slate-200'}`}>
+                                            🏢 How business works
+                                        </button>
+                                    </li>
+                                </ul>
+                            </div>
+                        </aside>
+
+                        {/* RIGHT PANE / MAIN CONTENT */}
+                        <main className="flex-grow p-4 md:p-8 max-w-4xl w-full">
+                            {isLoading && <div className="text-center py-10 text-slate-500 font-semibold">Loading data...</div>}
+
+                            {!isLoading && currentView === 'feed' && (
+                                <div className="space-y-4 animate-fade-in">
+                                    <div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4">
+                                        <h2 className="text-2xl font-bold text-slate-800 capitalize">
+                                            {searchQuery ? `Search Results for "${searchQuery}"` : `${sortOption} Ideas`}
+                                        </h2>
+                                        <button onClick={() => setCurrentView('contribute')} className="bg-red-700 text-white font-semibold px-4 py-2 rounded shadow hover:bg-red-800 transition">+ New Idea</button>
+                                    </div>
+                                    {sortedIdeas.length === 0 ? (
+                                        <div className="text-center py-10 text-slate-500 pane">No ideas found. Be the first to create one!</div>
+                                    ) : (
+                                        sortedIdeas.map(idea => <IdeaCard key={idea.id} idea={idea} onView={() => viewDetail(idea.id)} onUpvote={fetchData} />)
+                                    )}
+                                </div>
+                            )}
+
+                            {!isLoading && currentView === 'detail' && selectedIdeaId && (
+                                <IdeaDetail ideaId={selectedIdeaId} onBack={() => setCurrentView('feed')} />
+                            )}
+
+                            {!isLoading && currentView === 'contribute' && (
+                                <ContributeForm onSuccess={() => { fetchData(); setCurrentView('feed'); }} />
+                            )}
+
+                            {/* NEWSLETTERS VIEW */}
+                            {!isLoading && currentView === 'newsletters' && (
+                                <div className="space-y-4 animate-fade-in">
+                                    <div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4">
+                                        <h2 className="text-2xl font-bold text-slate-800">Leadership Newsletters</h2>
+                                        <button onClick={() => setCurrentView('create-newsletter')} className="bg-slate-800 text-white font-semibold px-4 py-2 rounded shadow hover:bg-slate-900 transition">Write Post</button>
+                                    </div>
+                                    <div className="grid gap-6">
+                                        {newsletters.map(n => (
+                                            <div key={n.id} className="pane p-6 hover:shadow-md transition">
+                                                <div className="text-xs text-slate-500 font-bold mb-2 flex justify-between">
+                                                    <span>{n.timestamp}</span>
+                                                    <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded">{n.id}</span>
+                                                </div>
+                                                <h3 className="text-xl font-black text-slate-900 mb-2">{n.title}</h3>
+                                                <p className="text-slate-700 mb-4 whitespace-pre-wrap">{n.content}</p>
+                                                <AttachmentDisplay dataUrl={n.attachment} />
+                                                <div className="mt-4 pt-4 border-t border-slate-100 flex items-center gap-2">
+                                                    <div className="w-8 h-8 rounded-full bg-red-100 text-red-800 flex items-center justify-center font-bold">{n.author.charAt(0)}</div>
+                                                    <span className="text-sm font-semibold text-slate-700">Posted by {n.author}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {!isLoading && currentView === 'create-newsletter' && (
+                                <NewsletterForm onSuccess={() => { fetchData(); setCurrentView('newsletters'); }} onCancel={() => setCurrentView('newsletters')} />
+                            )}
+
+                            {/* HOW BUSINESS WORKS VIEW */}
+                            {!isLoading && currentView === 'history' && (
+                                <HistoryView />
+                            )}
+
+                            {/* ENHANCED ABOUT VIEW */}
+                            {!isLoading && currentView === 'about' && (
+                                <div className="pane p-8 text-slate-700 space-y-7 animate-fade-in">
+
+                                    <div className="border-b border-slate-200 pb-4">
+                                        <h2 className="text-3xl font-black text-slate-900 mb-2">About C&S Think tank</h2>
+                                        <p className="text-lg text-slate-600 font-medium">Empowering every voice to shape the future of our business.</p>
+                                    </div>
+
+                                    <div className="bg-red-50 border-l-4 border-red-700 p-5 rounded-r-md">
+                                        <p className="italic font-bold text-red-900 text-[17px] leading-relaxed">
+                                            "Innovation is a numbers game. Out of 10 ideas, 6 might look good on paper, 2 might seem unconventional, and 1 might be impossible to execute right now. But that remaining 1 idea holds the potential to transform our operations or uncover massive new revenue. To find that single brilliant spark, we must first have the courage to share all 10."
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-6">
+                                        <div>
+                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mb-2">
+                                                <span className="text-red-600">⚡</span> Solving Problems Faster
+                                            </h3>
+                                            <p className="text-[15px] leading-relaxed text-slate-700">
+                                                If you are trying to fix a repetitive broken pipeline or an operational bug, you might not have all the resources yourself. However, someone from a completely different team might have solved a similar issue in the past. This platform expedites your path to execution by connecting you with the right people who can offer their expertise. <em>"A problem shared is a problem halved."</em>
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mb-2">
+                                                <span className="text-red-600">🤝</span> Contributing to a Common Vision
+                                            </h3>
+                                            <p className="text-[15px] leading-relaxed text-slate-700">
+                                                You might not have a full understanding of every business unit, and that's okay. When you share a thought and your peers validate it through upvotes and comments, momentum builds. Because this platform permanently tracks the evolution of an idea, leadership knows exactly who contributed what, ensuring that the right people get the visibility, recognition, and potential compensation they deserve.
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mb-2">
+                                                <span className="text-red-600">🏆</span> Direct Appreciation from Leadership
+                                            </h3>
+                                            <p className="text-[15px] leading-relaxed text-slate-700">
+                                                <em>"A circle has no boundaries, and neither does human imagination."</em> Leadership doesn't have the capacity to monitor every single daily challenge on the floor. But when an idea is highly upvoted and actively discussed here, it naturally rises to the top. This crowd-sourced validation allows leadership to easily spot, assess, and directly appreciate the innovative minds behind the solutions.
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mb-2">
+                                                <span className="text-red-600">📰</span> A Two-Way Street with Newsletters
+                                            </h3>
+                                            <p className="text-[15px] leading-relaxed text-slate-700">
+                                                Innovation isn't just bottom-up. Our Leadership Newsletters allow executives to seamlessly share their strategic thoughts and visions directly with the team. It invites instant feedback from employees, making the Think tank a unified medium for observation, thought-sharing, and growth.
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 mb-2">
+                                                <span className="text-red-600">🏢</span> How Business Works
+                                            </h3>
+                                            <p className="text-[15px] leading-relaxed text-slate-700">
+                                                To solve a pain point, you must first understand the system. We encourage everyone to explore the <strong>How Business Works</strong> section. When you understand our history, operations, and pain points, you're perfectly positioned to put forward ideas that ease processes and propel us forward.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-50 p-6 rounded-lg border border-slate-200 mt-8">
+                                        <h3 className="text-xl font-black text-slate-900 mb-4 border-b pb-2">How it works:</h3>
+                                        <ul className="list-disc pl-5 space-y-3 text-[15px] font-semibold text-slate-700">
+                                            <li>Submit an idea in the Contribute section. A unique ID is generated for tracking.</li>
+                                            <li>Tag relevant colleagues and attach images or files to support your case.</li>
+                                            <li>If a thread gets too long, click <b>Summarize Conversation</b> to let Gemini AI give you a quick digest.</li>
+                                            <li>Use the left sidebar to sort through ideas or read Leadership Newsletters.</li>
+                                        </ul>
+                                    </div>
+
+                                </div>
+                            )}
+
+                            {!isLoading && currentView === 'contact' && (
+                                <div className="pane p-8 text-center text-slate-700 animate-fade-in">
+                                    <h2 className="text-2xl font-bold text-slate-900 mb-6">Contact Admin</h2>
+                                    <div className="space-y-3">
+                                        <p className="font-bold text-lg text-slate-800">Mahikshith</p>
+                                        <p>
+                                            <a href="mailto:mahikshith97@gmail.com" className="text-red-700 hover:text-red-800 transition font-semibold">mahikshith97@gmail.com</a>
+                                        </p>
+                                        <p>
+                                            <a href="https://github.com/mahikshith" target="_blank" rel="noopener noreferrer" className="text-red-700 hover:text-red-800 transition font-semibold">https://github.com/mahikshith</a>
+                                        </p>
+                                    </div>
+                                    <p className="mt-8 text-sm text-slate-500 font-medium">Having issues or want to suggest a feature for C&S Think tank? Reach out anytime.</p>
+                                </div>
+                            )}
+                        </main>
+                    </div>
+                </div>
+            );
+        };
+
+        const IdeaCard = ({ idea, onView, onUpvote }) => {
+            const handleUpvote = async (e) => {
+                e.stopPropagation();
+                await api.upvoteIdea(idea.id);
+                onUpvote();
+            };
+            const statusColors = { "Proposed": "bg-amber-100 text-amber-800", "Under Review": "bg-indigo-100 text-indigo-800", "Implemented": "bg-green-100 text-green-800" };
+
+            return (
+                <div onClick={onView} className="pane p-0 flex cursor-pointer hover:border-red-300 transition group overflow-hidden">
+                    <div className="bg-slate-50 p-4 flex flex-col items-center justify-start border-r border-e5e7eb min-w-[60px]">
+                        <button onClick={handleUpvote} className="text-slate-400 hover:text-red-600 p-1"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7"></path></svg></button>
+                        <span className="font-bold text-slate-700">{idea.upvotes}</span>
+                    </div>
+                    <div className="p-4 flex-grow">
+                        <div className="flex justify-between items-start mb-1">
+                            <div className="flex gap-2 items-center text-xs text-slate-500 mb-2">
+                                <span className="font-mono bg-slate-100 px-2 py-0.5 rounded border">{idea.id}</span>
+                                <span>•</span><span>Posted by <span className="font-semibold text-slate-700">{idea.author}</span></span>
+                                <span>•</span><span className="bg-slate-100 px-2 py-0.5 rounded">{idea.category}</span>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded-full font-bold ${statusColors[idea.status] || "bg-gray-100"}`}>{idea.status}</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-red-700 transition">{idea.title}</h3>
+                        <p className="text-slate-600 text-sm line-clamp-2">{idea.description}</p>
+
+                        <div className="mt-4 flex gap-4 text-xs font-bold text-slate-500">
+                            <div className="flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                                {idea.comments ? idea.comments.length : 0} Comments
+                            </div>
+                            {idea.attachment && (
+                                <div className="flex items-center gap-1 text-blue-600"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg> Attachment</div>
+                            )}
+                            {idea.summary && (
+                                <div className="flex items-center gap-1 text-purple-600"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> AI Summarized</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const CommentNode = ({ comment, allComments, ideaId, onRefresh }) => {
+            const [isReplying, setIsReplying] = useState(false);
+            const [replyText, setReplyText] = useState("");
+            const [attachmentUrl, setAttachmentUrl] = useState(null);
+
+            const children = allComments.filter(c => c.parentId === comment.id);
+
+            const handleVote = async (delta) => {
+                await api.voteComment(ideaId, comment.id, delta);
+                onRefresh();
+            };
+
+            const handleFile = async (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    const base64 = await fileToBase64(e.target.files[0]);
+                    setAttachmentUrl(base64);
+                }
+            };
+
+            const submitReply = async (e) => {
+                e.preventDefault();
+                if (!replyText.trim() && !attachmentUrl) return;
+                await api.addComment(ideaId, { author: CURRENT_USER, text: replyText, parentId: comment.id, upvotes: 0, attachment: attachmentUrl });
+                setReplyText("");
+                setAttachmentUrl(null);
+                setIsReplying(false);
+                onRefresh();
+            };
+
+            return (
+                <div className="mt-4">
+                    <div className="flex gap-2 items-start">
+                        <div className="flex flex-col items-center text-slate-400 mt-1 min-w-[30px]">
+                            <button onClick={() => handleVote(1)} className="hover:text-red-500 transition cursor-pointer p-0.5"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7"></path></svg></button>
+                            <span className="text-xs font-bold text-slate-700">{comment.upvotes || 0}</span>
+                            <button onClick={() => handleVote(-1)} className="hover:text-slate-500 transition cursor-pointer p-0.5"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg></button>
+                        </div>
+
+                        <div className="flex-grow">
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-bold text-sm text-slate-800">{comment.author}</span>
+                                    <span className="text-xs text-slate-400">• {comment.timestamp}</span>
+                                </div>
+                                <p className="text-sm text-slate-700 whitespace-pre-wrap">{comment.text}</p>
+
+                                <AttachmentDisplay dataUrl={comment.attachment} />
+
+                                <div className="mt-2 flex">
+                                    <button onClick={() => setIsReplying(!isReplying)} className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-200 px-2 py-1 rounded transition">
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg> Reply
+                                    </button>
+                                </div>
+                            </div>
+
+                            {isReplying && (
+                                <form onSubmit={submitReply} className="mt-2 ml-2 bg-white p-3 rounded border">
+                                    <textarea className="w-full border rounded p-2 text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 mb-2" rows="2" placeholder="Write a reply..." value={replyText} onChange={(e) => setReplyText(e.target.value)} autoFocus></textarea>
+
+                                    <div className="flex justify-between items-center">
+                                        <label className="cursor-pointer text-sm font-semibold text-slate-500 hover:text-red-700 flex items-center gap-1">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                                            {attachmentUrl ? 'File Attached ✓' : 'Attach File'}
+                                            <input type="file" className="hidden" onChange={handleFile} />
+                                        </label>
+                                        <div className="flex gap-2">
+                                            <button type="button" onClick={() => setIsReplying(false)} className="text-xs text-slate-500 hover:text-slate-800 px-3 py-1 font-semibold">Cancel</button>
+                                            <button type="submit" className="bg-red-700 text-white px-4 py-1.5 rounded hover:bg-red-800 transition text-xs font-semibold">Reply</button>
+                                        </div>
+                                    </div>
+                                    {attachmentUrl && <AttachmentDisplay dataUrl={attachmentUrl} />}
+                                </form>
+                            )}
+
+                            {children.length > 0 && (
+                                <div className="pl-4 ml-2 border-l-2 border-slate-200 mt-2">
+                                    {children.sort((a, b) => b.upvotes - a.upvotes).map(child => (
+                                        <CommentNode key={child.id} comment={child} allComments={allComments} ideaId={ideaId} onRefresh={onRefresh} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const IdeaDetail = ({ ideaId, onBack }) => {
+            const [idea, setIdea] = useState(null);
+            const [commentText, setCommentText] = useState("");
+            const [attachmentUrl, setAttachmentUrl] = useState(null);
+            const [isSummarizing, setIsSummarizing] = useState(false);
+
+            const fetchIdea = async () => {
+                const data = await api.getIdea(ideaId);
+                if (data) setIdea({ ...data });
+            };
+
+            useEffect(() => { fetchIdea(); }, [ideaId]);
+
+            const handleFile = async (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    const base64 = await fileToBase64(e.target.files[0]);
+                    setAttachmentUrl(base64);
+                }
+            };
+
+            const submitComment = async (e) => {
+                e.preventDefault();
+                if (!commentText.trim() && !attachmentUrl) return;
+                await api.addComment(ideaId, { author: CURRENT_USER, text: commentText, parentId: null, upvotes: 0, attachment: attachmentUrl });
+                setCommentText("");
+                setAttachmentUrl(null);
+                fetchIdea();
+            };
+
+            const triggerSummary = async () => {
+                setIsSummarizing(true);
+                await api.summarizeIdea(ideaId);
+                await fetchIdea();
+                setIsSummarizing(false);
+            };
+
+            if (!idea) return <div className="text-center py-10">Loading pane...</div>;
+
+            return (
+                <div className="space-y-4 animate-fade-in">
+                    <button onClick={onBack} className="text-slate-500 hover:text-red-700 flex items-center gap-1 text-sm font-bold mb-2 transition">← Back to feed</button>
+
+                    <div className="pane p-6 border-t-4 border-t-red-600">
+                        <div className="flex justify-between items-start border-b pb-4 mb-4">
+                            <div>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="font-mono bg-red-50 text-red-800 px-2 py-1 rounded border border-red-200 font-bold">{idea.id}</span>
+                                    <span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-700 font-semibold">{idea.category}</span>
+                                </div>
+                                <h1 className="text-3xl font-bold text-slate-900">{idea.title}</h1>
+                                <p className="text-sm text-slate-500 mt-2">Proposed by <span className="font-bold text-slate-700">{idea.author}</span></p>
+                            </div>
+                            <div className="text-center bg-slate-50 p-2 rounded border min-w-[60px]">
+                                <span className="block text-xs text-slate-500 uppercase font-bold tracking-wide">Votes</span>
+                                <span className="text-xl font-bold text-red-700">{idea.upvotes}</span>
+                            </div>
+                        </div>
+
+                        <div className="prose max-w-none text-slate-700 whitespace-pre-wrap text-[15px] leading-relaxed">
+                            {idea.description}
+                        </div>
+
+                        <AttachmentDisplay dataUrl={idea.attachment} />
+
+                        {idea.tagged_employees && idea.tagged_employees.length > 0 && (
+                            <div className="mt-6 pt-4 border-t">
+                                <span className="text-sm font-bold text-slate-700 mr-2">Tagged:</span>
+                                {idea.tagged_employees.map(emp => (
+                                    <span key={emp} className="inline-block bg-slate-100 text-slate-800 font-semibold text-xs px-2 py-1 rounded-full mr-2 mb-2">@{emp}</span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="pane p-6 bg-purple-50 border-purple-100">
+                        <div className="flex justify-between items-center mb-3">
+                            <h3 className="text-lg font-bold text-purple-900 flex items-center gap-2">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> AI Conversation Summary
+                            </h3>
+                            <button onClick={triggerSummary} disabled={isSummarizing} className="bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm px-4 py-2 rounded transition disabled:opacity-50">
+                                {isSummarizing ? "Summarizing..." : (idea.summary ? "Refresh Summary" : "Summarize Thread")}
+                            </button>
+                        </div>
+                        {idea.summary ? <p className="text-purple-800 text-sm leading-relaxed">{idea.summary}</p> : <p className="text-purple-400 text-sm italic">Click the button above to use Gemini to summarize this idea and all its comments.</p>}
+                    </div>
+
+                    <div className="pane p-6">
+                        <h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2">Discussion ({idea.comments.length})</h3>
+
+                        <form onSubmit={submitComment} className="mb-8">
+                            <textarea className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 mb-2" rows="3" placeholder="Add your thoughts or mention someone..." value={commentText} onChange={(e) => setCommentText(e.target.value)}></textarea>
+
+                            <div className="flex justify-between items-center">
+                                <label className="cursor-pointer text-sm font-semibold text-slate-500 hover:text-red-700 flex items-center gap-1">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                                    {attachmentUrl ? 'File Attached ✓' : 'Attach File'}
+                                    <input type="file" className="hidden" onChange={handleFile} />
+                                </label>
+                                <button type="submit" className="bg-slate-800 text-white px-6 py-2 rounded hover:bg-slate-700 transition text-sm font-semibold">Post Comment</button>
+                            </div>
+                            {attachmentUrl && <AttachmentDisplay dataUrl={attachmentUrl} />}
+                        </form>
+
+                        <div className="space-y-2">
+                            {idea.comments.filter(c => !c.parentId).sort((a, b) => b.upvotes - a.upvotes).map(comment => (
+                                <CommentNode key={comment.id} comment={comment} allComments={idea.comments} ideaId={ideaId} onRefresh={fetchIdea} />
+                            ))}
+                            {idea.comments.length === 0 && <p className="text-center text-slate-400 text-sm py-4">No comments yet. Be the first to start the discussion!</p>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ContributeForm = ({ onSuccess }) => {
+            const [formData, setFormData] = useState({ title: "", category: "New Idea", description: "", tagged: "" });
+            const [attachmentUrl, setAttachmentUrl] = useState(null);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
+            const handleFile = async (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    const base64 = await fileToBase64(e.target.files[0]);
+                    setAttachmentUrl(base64);
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setIsSubmitting(true);
+                const tagsList = formData.tagged.split(',').map(t => t.trim()).filter(t => t);
+                await api.createIdea({ ...formData, author: CURRENT_USER, tagged_employees: tagsList, attachment: attachmentUrl });
+                setIsSubmitting(false);
+                onSuccess();
+            };
+
+            return (
+                <div className="pane p-8 max-w-2xl mx-auto border-t-4 border-t-red-600 animate-fade-in">
+                    <h2 className="text-2xl font-bold text-slate-900 mb-6 border-b pb-2">Create a New Idea</h2>
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1">Heading / Title</label>
+                            <input required type="text" className="w-full border border-slate-300 p-2.5 rounded focus:ring-1 focus:ring-red-500 focus:border-red-500 focus:outline-none transition" value={formData.title} onChange={e => setFormData({ ...formData, title: e.target.value })} placeholder="E.g. Automate Onboarding Emails" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1">Tag / Category</label>
+                            <select className="w-full border border-slate-300 p-2.5 rounded focus:ring-1 focus:ring-red-500 focus:border-red-500 focus:outline-none bg-white transition" value={formData.category} onChange={e => setFormData({ ...formData, category: e.target.value })}>
+                                <option>New Idea</option><option>Process Improvement</option><option>Bug Report / Fix</option><option>Culture & Team</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1">Idea Description</label>
+                            <textarea required rows="6" className="w-full border border-slate-300 p-2.5 rounded focus:ring-1 focus:ring-red-500 focus:border-red-500 focus:outline-none transition" value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} placeholder="Explain your idea..."></textarea>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2">Attachments (Images/Docs)</label>
+                            <div className="border-2 border-dashed border-slate-300 rounded p-6 text-center hover:bg-slate-50 transition cursor-pointer relative">
+                                <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFile} />
+                                <div className="text-slate-500 font-semibold">{attachmentUrl ? 'File Selected ✓ (Click to change)' : 'Click to browse or drag a file here'}</div>
+                            </div>
+                            {attachmentUrl && <AttachmentDisplay dataUrl={attachmentUrl} />}
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1">Tag Employees (Comma separated)</label>
+                            <input type="text" className="w-full border border-slate-300 p-2.5 rounded focus:ring-1 focus:ring-red-500 focus:border-red-500 focus:outline-none transition" value={formData.tagged} onChange={e => setFormData({ ...formData, tagged: e.target.value })} placeholder="Jane Doe, John Smith" />
+                            <p className="text-xs text-slate-500 mt-1 font-medium">They will be notified and invited to contribute.</p>
+                        </div>
+                        <div className="pt-4 flex justify-end gap-3 border-t border-slate-200">
+                            <button type="submit" disabled={isSubmitting} className="bg-red-700 text-white px-6 py-2 rounded hover:bg-red-800 transition font-bold disabled:opacity-50">
+                                {isSubmitting ? "Creating..." : "Publish Idea"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        const NewsletterForm = ({ onSuccess, onCancel }) => {
+            const [formData, setFormData] = useState({ title: "", content: "" });
+            const [attachmentUrl, setAttachmentUrl] = useState(null);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
+            const handleFile = async (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    const base64 = await fileToBase64(e.target.files[0]);
+                    setAttachmentUrl(base64);
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setIsSubmitting(true);
+                await api.createNewsletter({ ...formData, author: CURRENT_USER, attachment: attachmentUrl });
+                setIsSubmitting(false);
+                onSuccess();
+            };
+
+            return (
+                <div className="pane p-8 max-w-2xl mx-auto border-t-4 border-t-slate-800 animate-fade-in">
+                    <h2 className="text-2xl font-bold text-slate-900 mb-6 border-b pb-2">Draft Newsletter</h2>
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1">Headline</label>
+                            <input required type="text" className="w-full border border-slate-300 p-2.5 rounded focus:ring-1 focus:ring-red-500 focus:border-red-500 focus:outline-none transition" value={formData.title} onChange={e => setFormData({ ...formData, title: e.target.value })} placeholder="E.g. Q4 Company Update" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1">Content</label>
+                            <textarea required rows="10" className="w-full border border-slate-300 p-2.5 rounded focus:ring-1 focus:ring-red-500 focus:border-red-500 focus:outline-none transition" value={formData.content} onChange={e => setFormData({ ...formData, content: e.target.value })} placeholder="Write your update here..."></textarea>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2">Featured Image / Banner</label>
+                            <div className="border-2 border-dashed border-slate-300 rounded p-6 text-center hover:bg-slate-50 transition cursor-pointer relative">
+                                <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFile} />
+                                <div className="text-slate-500 font-semibold">{attachmentUrl ? 'Image Attached ✓ (Click to change)' : 'Upload banner image'}</div>
+                            </div>
+                            {attachmentUrl && <AttachmentDisplay dataUrl={attachmentUrl} />}
+                        </div>
+                        <div className="pt-4 flex justify-end gap-3 border-t border-slate-200">
+                            <button type="button" onClick={onCancel} className="text-slate-500 hover:text-slate-800 font-semibold">Cancel</button>
+                            <button type="submit" disabled={isSubmitting} className="bg-slate-800 text-white px-6 py-2 rounded hover:bg-slate-900 transition font-bold disabled:opacity-50">
+                                {isSubmitting ? "Publishing..." : "Publish Newsletter"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        const HistoryView = () => {
+            return (
+                <div className="pane p-8 animate-fade-in max-w-3xl mx-auto">
+                    <div className="text-center mb-8 border-b pb-6">
+                        <h1 className="text-4xl font-black text-red-700 mb-2">Our Story</h1>
+                        <p className="text-xl text-slate-600 font-semibold">1918 – Today</p>
+                    </div>
+
+                    <div className="space-y-10 text-slate-700 leading-relaxed">
+                        <section>
+                            <h2 className="text-2xl font-bold text-slate-900 mb-3 border-l-4 border-red-600 pl-3">1918-1955: Early Years</h2>
+                            <p className="mb-4">Israel Cohen, company founder, began his career in the wholesale grocery business in the early 1900s. While working in Worcester, Mass. for $25 a week, Israel reasoned that he could make a greater profit and provide better service on his own.</p>
+                            <p className="mb-4">Together with his business partner, Abraham Siegel, Israel founded C&S Wholesale Grocers in 1918. The company's 5,000-square foot, three-story warehouse facility was located on Winter Street in Worcester and was managed by three warehouse workers who distributed 1,200 grocery products. Competition was fierce in the wholesale grocery industry. Growing urban populations were demanding more from their tiny neighborhood stores, while an economic war was threatening to permanently change food distribution.</p>
+                            <p>Israel Cohen had learned very early that there would be no C&S without the customer. While some wholesalers were more aggressive, C&S representatives took the time to talk with the clients, listening to their ideas and concerns. Slowly, C&S's customer service reputation spread, increasing not only the number of customers but also company profits.</p>
+                        </section>
+
+                        <section>
+                            <h2 className="text-2xl font-bold text-slate-900 mb-3 border-l-4 border-red-600 pl-3">1955-1974: Strength Through Perseverance</h2>
+                            <p className="mb-4">In 1955, C&S was a successful, mid-sized wholesale company and was ready for another move—this time to a 35,000-square foot facility on Millbrook Street in Worcester. Lester enjoyed the business and now was working with his father full-time. A born salesman, Lester was soon "pounding the pavement," calling on 30 small grocers a day. His perseverance paid off; C&S now had more business than ever before.</p>
+                            <p>In 1958, C&S's pivotal moment came when C&S won the Big D supermarket account. This eight-store chain was ahead of its time, signaling C&S's transition from small independent stores to supermarket chains. By 1963, C&S needed more warehouse space and moved to a 200,000 square foot facility on Pullman Street, the former home of the famous Pullman train cars.</p>
+                        </section>
+
+                        <section>
+                            <h2 className="text-2xl font-bold text-slate-900 mb-3 border-l-4 border-red-600 pl-3">1974-1997: The Risk Is Worth the Reward</h2>
+                            <p className="mb-4">Lester's son, Rick, joined the company in 1974. By this time, C&S had grown to annual sales of $14 million, but the lack of a modern warehouse facility severely hindered further growth. The old Pullman Street facility could not service large contracts, so a tough decision had to be made.</p>
+                            <p className="mb-4">Much to his father's surprise, Rick determined that the business must move west. To support the new strategy, C&S built a 300,000-square foot warehouse and distribution complex in Brattleboro, Vt. in 1981. Employees were asked to take temporary pay cuts, and everyone worked together to keep the business running. The goal was to reach $300 million in sales in the next five years.</p>
+                            <p>Rick's calculations proved correct. A&P supermarkets gave C&S their business, and other large supermarkets quickly followed suit. Earnings rose, and employees were soon making even more than before. During the first 10 years in Vermont, C&S surpassed their goal and grew to more than $1 billion in annual sales.</p>
+                        </section>
+
+                        <section>
+                            <h2 className="text-2xl font-bold text-slate-900 mb-3 border-l-4 border-red-600 pl-3">1997-Present: Growth Through Expansion</h2>
+                            <p className="mb-4">Toward the end of the 1990s, C&S continued to grow rapidly, opening facilities across New York, New Jersey, Maryland, Pennsylvania, and Hawaii. In 2014, C&S acquired Associated Wholesalers, Inc. (AWI) and Grocers Supply in Houston, allowing C&S to branch into new regions.</p>
+                            <p className="mb-4">C&S's growth journey continued as it entered the retail market space, acquiring Piggly Wiggly® Midwest in 2021, and officially bringing iconic Grand Union supermarkets back to New York and Vermont.</p>
+                            <p className="font-semibold p-4 bg-slate-50 rounded border border-slate-200">In 2025, C&S acquired Spartan Nash further expanding its footprint. C&S now employs more than 30,000 team members and operates almost 60 complementary distribution centers across the U.S. — serving close to 10,000 independent retail locations, as well as military commissaries and exchanges, with more than 200 corporate-run grocery stores. Today, C&S is recognized as an industry-leading food solutions company in the grocery industry.</p>
+                        </section>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
